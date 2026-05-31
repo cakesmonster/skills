@@ -5,17 +5,17 @@
 
 用法:
     # 抓取全部可见笔记
-    python3 scrape_profile.py --uid 6842c0c2000000001e03e2fc
-    python3 scrape_profile.py --url https://www.xiaohongshu.com/user/profile/6842c0c2000000001e03e2fc
+    python3 scrape_profile.py --uid <user_id>
+    python3 scrape_profile.py --url https://www.xiaohongshu.com/user/profile/<user_id>
 
     # 增量模式（跳过已有数据）
-    python3 scrape_profile.py --uid 6842c0c2000000001e03e2fc --data-dir ~/.hermes/data/xhs/hld
+    python3 scrape_profile.py --uid <user_id> --data-dir ~/.hermes/data/xhs/博主名/
 
     # 仅列出新笔记 ID（不抓详情）
-    python3 scrape_profile.py --uid 6842c0c2000000001e03e2fc --list-only
+    python3 scrape_profile.py --uid <user_id> --list-only
 
     # 限制抓取数量
-    python3 scrape_profile.py --uid 6842c0c2000000001e03e2fc --max-notes 10
+    python3 scrape_profile.py --uid <user_id> --max-notes 10
 """
 
 import argparse
