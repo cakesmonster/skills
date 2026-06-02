@@ -241,6 +241,26 @@ FIFO 配对买入→卖出，输出每笔完整交易记录。`_build_paper_acco
 
 **持仓无买入记录补全**：买入发生在 `trade_record` 表创建前的股票，从最新 `account_snapshot.holdings` 中取 cost/shares，补一条 `buyDate="—"` 的「持仓中」条目。配对时名字优先取买入记录的 name（卖出记录可能把 code 填在 name 列）。
 
+### 建仓 BUY 补录（`_build_synthetic_buys`，2026-06-02）
+
+**问题**: `trade_record` 表在系统上线后才创建，已建仓的票其原始 BUY 不在表内。FIFO 配对只能看到 SELL 找不到 BUY，导致历史交易记录里**已经平仓的票完全消失**（仅当今天不再持仓时——"补持仓"逻辑只补"还持有的"，已平仓的遗漏）。
+
+**方案**: 扫描全部 `account_snapshot` 历史 holdings（不限 LIMIT 10，按日期升序），对每只**没有任何真实 BUY 记录**的票，在其首次出现的快照日合成一条 BUY 记录（cost = 当时持仓成本，qty = 当时持仓股数，time = `00:00:00`），然后走标准 FIFO 配对。
+
+**实现要点**:
+- 查询必须用 `ORDER BY date ASC`，否则取到的是"最后持有那天"（如 6/1）而非"建仓那天"（如 5/25）
+- 查询放 `with db_session() as conn:` 块内一次性取 `[(date, holdings_json), ...]`，避免连接已关闭的 `ProgrammingError: Cannot operate on a closed database`
+- 已有真实 BUY 的票（`has_real_buy` 集合）跳过，避免重复补
+- 合成的 BUY `reason="建仓补录"`，前端可据此标识
+
+**已知限制**: `time=00:00:00` 是占位值（account_snapshot 不存分钟级时间），用户看到买入时间都是 00:00:00。如果未来需要精确建仓时间，需要在 `account_snapshot` 加 `holdings_first_seen_at` 字段。
+
+### trade_record 与 account_snapshot 数据源优先级
+
+`trade_record` ← 外部打板监控进程写 sundial SQLite；`account_snapshot` ← sundial 调同花顺模拟炒股 API 每 30 分钟同步。
+
+**两边冲突时，以 `account_snapshot` 为准**——THS 持仓 API 是真实成交结果，`trade_record` 是监控端内部记录（可能含委托失败条目，详见 board-monitor skill 相关陷阱）。历史盈亏诊断时，先看 `account_snapshot` 持仓变化判断"是否真的成交过"，再看 `trade_record` 找具体单价。
+
 ### 前端"今日成交"方向列字段名
 
 后端返回 `t.direction`（`"买入"/"卖出"`），不是 `t.side`。JS 中需用 `t.direction === '买入'`。
