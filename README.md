@@ -1,12 +1,24 @@
 # Skills
 
-为 Hermes Agent 编写的自定义 skill，存放于 `~/cakemonster/skills/`，软链接到 `~/.hermes/skills/trading/` 供 Agent 加载。
+为 Hermes Agent 编写的自定义 skill，存放于 `~/cakemonster/skills/`，软链接到 `~/.hermes/profiles/news-friday/skills/` 供 Agent 加载。
+
+> 配套管理 skill：**`skills-repo-manager`**（强制每次先 `cd` 到本仓库再操作，不从 `/root/cakemonster` 顶层执行 git 命令）。
+
+---
+
+## zhong-shen-shi-nei ⭐
+
+《置身事内：中国政府与经济发展》知识问答 Wiki——基于书籍原始转写文本的章节级检索 + 问答。
+
+**用途：** 读原书 / 查概念 / 跨章节对照。支持按章节、按概念、按引用段落定位。
+
+**数据规模：** 8 章转写文本 + 结构化索引。
 
 ---
 
 ## bilibili-download
 
-B站音视频下载器，通过 B站公开 API 获取 DASH 流，无需登录、无需 cookies。
+B 站音视频下载器，通过 B 站公开 API 获取 DASH 流，无需登录、无需 cookies。
 
 **功能：** 音频提取（m4s → mp3）、视频提取（m4s → mp4）、完整视频下载（音视频合并）
 
@@ -72,11 +84,38 @@ A 股市场情绪量化判断——四层框架 + 五阶段输出。
 
 **零 mock 兜底：** 数据源失败返回空，不生成假数据。
 
+**产业链模块：** 已集成到日晷 Sundial 进程内（端口 8100），不再独立运行。只有同花顺有独立概念/行业板块的产业环节才能成为节点，节点名 = THS 板块名。数据文件 `macro-industry.json`（398节点+480边）存于 `sundial/data/industry_data/`。
+
 ---
 
+## taoguba-scraper
 
-产业链分析可视化平台——已集成到日晷 Sundial（端口 8100），不再独立运行。
+淘股吧（tgb.cn）独立帖子抓取器。
 
-**核心规则：** 只有同花顺有独立概念/行业板块的产业环节才能成为节点，节点名 = THS 板块名。数据文件 `macro-industry.json`（398节点+480边）存于 `sundial/data/industry_data/`。
+**功能：** 单帖正文抓取、作者信息提取、楼中楼回复解析。
 
-**用途：** 为日晷产业链 tab 提供 D3 力导向图渲染，与日晷其他页面共享同一浅色主题。
+---
+
+## zlib-download
+
+Z-Library 书籍下载器，优先 EPUB 格式。
+
+**核心组件：** CloakBrowser（v0.3.31，Chromium 146）+ Xvfb 绕过 Cloudflare 检测。
+
+**反爬策略：** UA 模拟微信环境 + 浏览器指纹伪装 + 隐身模式 + 完整页面渲染等待。
+
+---
+
+## proxy-on-linux
+
+Linux 代理配置工具—— sing-box + Reality 协议。
+
+**用途：** 在 Linux 服务器上快速搭建 Reality 代理出口（兼容中国大陆服务器无国际带宽场景）。
+
+---
+
+## 更新日志
+
+- **2026-06-04**：新增 `zhong-shen-shi-nei`（《置身事内》知识问答 Wiki）
+- **2026-06-04**：补 README 缺漏（taoguba-scraper / zlib-download / proxy-on-linux 之前没列）
+- **2026-06-04**：补建 `skills-repo-manager` 强制仓库身份识别流程
