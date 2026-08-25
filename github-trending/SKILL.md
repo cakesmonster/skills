@@ -1,54 +1,34 @@
 ---
 name: github-trending
-description: 抓取 GitHub Trending 日/周/月热门项目，输出 Markdown。基于 BeautifulSoup 解析 SSR HTML。
-version: 2.0.0
+description: 抓取 GitHub Trending 日/周/月热门项目，输出 Markdown。浏览器 SSR HTML 解析（Cron 首选路径）。
+version: 2.6.0
 ---
 
 # github-trending — 获取 GitHub 热门项目
 
-抓取 GitHub Trending 页面（日榜/周榜/月榜），输出 Markdown 格式。
-纯 Python 实现，使用 BeautifulSoup 解析服务端渲染 HTML，不依赖浏览器或第三方 API。
+抓取 GitHub Trending 页面（日榜/周榜/月榜），输出中文 Markdown 简报。
+
+## Cron 定时任务 — 方法优先级
+
+| 优先级 | 方法 | 说明 |
+|--------|------|------|
+| 1 | 浏览器 → Trending 页面 | ✅ **首选**。SSR HTML，含增量星数，三榜均可。但 CDP 超时频率上升 |
+| 2 | 浏览器 → Search API | ✅ **可靠回退**（2026-07-16 验证：Trending 全路径超时时唯一可用路径）。无增量星数；需过滤垃圾 repo |
+| 3 | execute_code | ❌ Cron 下阻断 |
+| 4 | terminal | ❌ tirith 拦截 |
 
 ## 使用方法
 
-### 方式一：execute_code（推荐）
+### 方式一：浏览器 Trending 页面（Cron 推荐 ⭐）
 
-当 `terminal()` 中运行 `python3 -c` 被安全扫描拦截时，用 `execute_code` 代替：
-
-```python
-import sys
-sys.path.insert(0, 'venv/lib/python3.11/site-packages')
-from gh_trending import scrape, fmt_markdown
-
-# 逐个抓取（避免连续请求被限流）
-for period in ['daily', 'weekly', 'monthly']:
-    try:
-        repos = scrape(period)
-        print(fmt_markdown(period, repos, limit=15))
-    except Exception as e:
-        print(f"⚠️ {period} 抓取失败: {e}")
-```
-
-### 方式二：terminal 命令行
-
-```bash
-cd /usr/local/lib/hermes-agent && source venv/bin/activate
-python3 -c "
-import sys; sys.path.insert(0,'venv/lib/python3.11/site-packages')
-from gh_trending import scrape, fmt_markdown
-print(fmt_markdown('weekly', scrape('weekly'), limit=15))
-"
-```
-
-### 方式三：浏览器回退（requests 超时时使用）
-
-当 GitHub 从当前环境连接超时时，用浏览器工具抓取：
+**注意**：全局 Trending（`?since=daily`，无语言筛选）偶尔 CDP 超时，**重试通常成功**。语言特定页面（如 `/trending/python?since=daily`）可能更稳定但也可能同步超时（2026-07-16 实测：全局+python 页面双双超时）。**全路径超时时直接回退方式二（Search API）**，不要反复重试。
 
 ```python
 # 1. browser_navigate(url="https://github.com/trending?since=daily")
-# 2. browser_console 执行 JS 提取数据：
+#    如超时 → 重试一次 → 仍超时 → 直接回退 Search API（不要试语言特定页面）
+# 2. browser_console 执行 JS（已验证三榜正确提取）：
 """
-JSON.stringify(Array.from(document.querySelectorAll('article.Box-row')).map(a => {
+JSON.stringify(Array.from(document.querySelectorAll('article.Box-row')).slice(0,15).map(a => {
     const h2 = a.querySelector('h2 a');
     const name = h2 ? h2.getAttribute('href').replace(/^\//, '') : '';
     const desc = a.querySelector('p')?.textContent.trim() || '';
@@ -56,91 +36,83 @@ JSON.stringify(Array.from(document.querySelectorAll('article.Box-row')).map(a =>
     const language = lang ? lang.textContent.trim() : '';
     const starsEl = a.querySelector('a[href*="/stargazers"]');
     const stars = starsEl ? starsEl.textContent.trim().replace(/,/g, '') : '';
-    const todayText = Array.from(a.querySelectorAll('*')).find(el =>
-        el.textContent.includes('stars today'));
-    const m = todayText ? todayText.textContent.match(/([\\d,]+)\\s+stars?\\s+today/) : null;
-    return {name, desc, language, stars,
-        stars_today: m ? m[1].replace(/,/g, '') : ''};
+    const allText = a.textContent;
+    const m = allText.match(/([\\d,]+) stars? (today|this week|this month)/);
+    return {name, desc: desc.substring(0,200), language, stars,
+        stars_delta: m ? m[1].replace(/,/g, '') : ''};
 }))
 """
-# 3. 用返回的 JSON 手动格式化 Markdown
+# 3. 用返回的 JSON 格式化 Markdown
 ```
-JS 提取脚本另存为 [references/browser-fallback.js](references/browser-fallback.js)，可直接复制到 `browser_console(expression=...)` 复用。
 
-## 输出格式（Cron 推送用）
+**JS 提取关键点**：使用 `a.textContent` + 简化正则 `([\\d,]+) stars? (today|this week|this month)`。**不要**用 `\\s+` 转义（在 `browser_console` 多层转义中失效）或 `Array.from(...).find(...)` 子元素遍历（只匹配 "today"）。`.slice(0,15)` + `.substring(0,200)` 防截断。
 
-当作为定时任务推送给用户时，输出应为**中文 Markdown 简报**，而不是仅输出原始列表。
-推荐结构：
+### 方式二：浏览器 Search API（可靠回退 ✅）
 
-1. **标题 + 来源说明** — `# 🚀 GitHub Trending 日报` + 统计时间
-2. **三榜分开展示** — 今日 / 本周 / 本月，各一个 Markdown 表格（项目名、语言、总星数、新增星数）
-3. **亮点解读** — 每个榜单后附 3-5 条中文分析，点出值得关注的项目及其背景
-4. **趋势总结** — 末尾加一份横跨三榜的趋势观察表，按主题维度归纳（AI 编程基建、Agent 生态、垂直行业等）
+**2026-07-17 更新**：Search API 请求**必须顺序执行**（一次一个），不可并行 `browser_navigate`。`browser_console` 只在最后导航的页面上下文中执行——并行调用时前面的页面数据会丢失。
 
-表格格式示例：
+```python
+# ⚠️ 必须逐个请求，不能并行！每次 browser_navigate 后紧跟 browser_console 提取
+# 日榜：过去 2 天
+browser_navigate("https://api.github.com/search/repositories?q=created:%3E2026-07-14&sort=stars&order=desc&per_page=50")
+# → browser_console 提取
+# 周榜：过去 7 天
+browser_navigate("https://api.github.com/search/repositories?q=created:%3E2026-07-09&sort=stars&order=desc&per_page=50")
+# → browser_console 提取
+# 月榜：过去 30 天
+browser_navigate("https://api.github.com/search/repositories?q=created:%3E2026-06-16&sort=stars&order=desc&per_page=50")
+# → browser_console 提取
 ```
-| 🥇 | **owner/repo** | Python | 24.4k | +2,556 |
+
+**提取 JS**（三榜通用，返回 JSON）：
+```js
+JSON.stringify(JSON.parse(document.body.textContent).items.slice(0, 50).map(r => ({
+    name: r.full_name,
+    desc: (r.description || '').substring(0, 200),
+    language: r.language || '',
+    stars: r.stargazers_count,
+    forks: r.forks_count,
+    url: r.html_url,
+    created: r.created_at,
+    topics: (r.topics || []).slice(0, 5)
+})))
 ```
-如有描述文字值得展示，可另起一行 `📝 description`。
 
-## 核心模块
+**限制**：无增量星数（stars_delta），按累计星数排序（非增速排名）。**已知**：`browser_navigate` 到 `api.github.com` 可能返回空 `<body>`（2026-07-15 实测），此时无法获取数据，需等待下次 cron 重试。
 
-脚本：`venv/lib/python3.11/site-packages/gh_trending.py`（另见 [scripts/gh_trending.py](scripts/gh_trending.py)）
+### Search API 垃圾 repo 过滤
 
-| 函数 | 说明 |
-|------|------|
-| `scrape(period)` | 抓取指定周期，返回 `[{name, url, description, language, stars, stars_today, forks}]` |
-| `fmt_markdown(period, repos, limit=10)` | 格式化为 Markdown |
+Search API 返回的数据**任何一天都可能被垃圾仓库污染**（不仅仅是周末）。典型特征：
+- 星数完全相同且偏低（如全部 28⭐）
+- 描述含 "aimbot / wallhack / ESP / cheat / hack / undetected" 等游戏外挂关键词
+- 仓库名为 `*-Script-2026`、`*-Aimbot-*`、`*-Hack-*` 等模式
+- fork 数为 0，账号名含随机后缀
 
-## 原理
+**2026-07-17 新增检测模式**（周榜实测）：
+- 空描述 + 异常 fork/star 比（fork > star 且 fork > 1000）→ 典型 spam farm（如 x4gKing 系列）
+- 描述含 "sniper / bot / bundler / arbitrage" 且 fork 数异常 → 加密诈骗 bot
+- 标签含 "cheating-roblox / copy-game" 等游戏作弊标签 → 游戏作弊工具
 
-GitHub Trending 页面对爬虫做服务端渲染（SSR），HTML 中包含 `<article class="Box-row">` 元素，
-每个 article 内含项目名、描述、语言、star 数等信息。用 requests + BeautifulSoup(lxml) 直接解析，
-无需 headless browser 或第三方 API。
+**过滤策略**：三榜均取前 50 条后手动过滤，保留前 10-15 个真实项目。周榜/月榜同样需要过滤，不要假设"垃圾率低"。
 
-原 SkillHub 版 `github-trending.sh` 用的是 2017 年的正则抓取，GitHub 页面结构变更后已报废。
-公开的 trending API（gitterapp, gh-trending-api 等）也已不可用，直接解析 SSR HTML 是当前最可靠的方案。
+## 输出格式（Cron 推送）
 
-## 定时推送
-
-已配置 cron job `590b67878d40`，每天 9:00 推送日/周/月三榜到飞书。
-
-```bash
-# 查看
-hermes cron list
-
-# 手动触发
-hermes cron run 590b67878d40
-```
+中文 Markdown 简报结构：
+1. 标题 + 时间 + 来源说明（注明使用的方法路径和限制）
+2. 三榜分开展示（今日/本周/本月），各一个表格
+3. **每个项目配 `📝` 一行简介**（硬性要求，不含糊）
+4. 每个榜单后 3-5 条亮点解读
+5. 末尾跨榜趋势观察表（按主题维度归纳）
 
 ## 故障排除
 
-1. **解析失败**: GitHub 可能改了 HTML 结构 → 检查 `<article class="Box-row">` 是否存在
-2. **依赖缺失**: `pip install beautifulsoup4 lxml requests`
-3. **被限流**: 每天一次 cron 不会触发限流。手动测试间隔 ≥30 分钟
-4. **连接超时（ConnectTimeoutError / Read timeout）**: 从部分网络环境到 GitHub 的连接不稳定，同一 session 内某个周期成功而另一个持续超时是已知现象。不同时段网络状态也可能变化。
-   - **方案 A**: 加大 `gh_trending.py` 中的 `timeout` 参数（当前默认 30s）
-   - **方案 B** (execute_code monkey-patch，推荐): 当 30s 仍不够时，在 `execute_code` 中 monkey-patch `requests.get` 注入更大超时（60s），无需修改源文件：
-     ```python
-     import requests as req_module
-     original_get = req_module.get
-     def patched_get(url, **kwargs):
-         if 'timeout' not in kwargs:
-             kwargs['timeout'] = 60
-         return original_get(url, **kwargs)
-     req_module.get = patched_get
-     # 然后正常调用 scrape() / fmt_markdown()
-     ```
-     本 session 实测 30s 全部超时，60s 三榜全部成功。注意：monkey-patch 只在当前 `execute_code` 进程中生效，不影响模块文件。
-   - **方案 C**: 浏览器工具抓取（见「方式三」）。注意：浏览器本身也可能因 CDP 超时失败（`CDP command timed out: Page.navigate`），此时方案 B 更可靠。
-   - 如果某个周期反复超时而另一个周期正常，不要反复重试同一个 URL——用方案 B 或 C 作为回退通道。
-5. **terminal 安全拦截（tirith:unknown）**: `python3 -c` / `curl` / `ping` 等网络命令可能在 terminal 中被安全扫描拦截。改用 `execute_code` 执行相同的 Python 逻辑，`execute_code` 内的 `from gh_trending import ...` 和网络请求均不受限。`execute_code` 同时也避开了 terminal 安全扫描对简单网络命令的误拦截。
-6. **SSL 握手失败（SSLEOFError: UNEXPECTED_EOF_WHILE_READING）**: `requests` 库在某些网络环境下 SSL 握手会失败（即使加大 timeout 也无效），但 `urllib` 能绕过。这是已知现象 — 不要反复重试 `requests` 方案。
-   - **方案 D** (urllib 回退，当方案 A/B 均超时且不是 timeout 而是 SSL 错误时使用): 用 `urllib.request.urlopen()` + `ssl.CERT_NONE` 直接请求，然后手动用 BeautifulSoup 解析。完整实现见 [references/urllib-fallback.md](references/urllib-fallback.md)。
-   - 关键点：`ssl.create_default_context()` + `ctx.check_hostname = False` + `ctx.verify_mode = ssl.CERT_NONE`，配合标准浏览器 User-Agent header。
-   - 注意：此时无法复用 `gh_trending.scrape()`（它内部用 `requests.get()`），需要自己写 `fetch_trending()` 函数。完成后手动格式化 Markdown。
-   - 本 session 实测方案 B（requests monkey-patch 60s）全部超时 300s+，方案 D 成功，三榜抓取共耗时 ~7s。
+关键修复（持续更新）：
 
-## 相关技能
-
-- `playwright-cli`: 浏览器自动化（处理需要 JS 渲染的页面时使用）
+1. **Trending 页面 CDP 超时 → Search API 回退**（2026-07-16 新增）：全局 Trending 超时 → 重试仍超时 → 语言特定页面也超时 → **直接回退 Search API**。不要再试第三种语言页面，浪费时间。
+2. **Search API 空 body**：`api.github.com` 返回 `<body></body>` → 本次 cron 无法获取数据，等待下次重试。
+3. **stars_delta 全空**：`\\s+` 在 `browser_console` 转义失效 → 用 `a.textContent.match(/([\\d,]+) stars? (today|this week|this month)/)`。
+4. **周榜 Search API 垃圾 repo 污染**（2026-07-17 新增）：周榜同样含 spam farm（x4gKing 系列空描述 + fork 数异常）、加密 sniper bot、游戏作弊器。过滤时额外关注空描述 + fork/star 比异常、描述含 sniper/bot/bundler 的项目。
+5. **Search API 并行 browser_navigate 数据丢失**（2026-07-17 新增）：`browser_console` 只在最后导航的页面执行——并行调用时之前页面的数据无法提取。必须逐次 navigate → console → navigate → console。
+6. **JSON 截断**：内置 `.slice(0,15)` + `.substring(0,200)` 防护。
+7. **terminal tirith 拦截**：Cron 下不可用，直接用浏览器路径。
+8. **execute_code cron 阻断**：同上。

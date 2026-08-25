@@ -726,3 +726,7 @@ cd ~/.hermes/projects/sundial && python -m pytest -q  # 246 passed
 monkeypatch.setattr(cfg, "DB_PATH", db_path)
 monkeypatch.setattr("sundial.db.DB_PATH", db_path, raising=False)
 ```
+
+## 进一步参考
+
+- [`references/architecture-and-pitfalls.md`](references/architecture-and-pitfalls.md) — 量化系统整体架构（board_monitor :8099 + sundial :8100）+ 已知陷阱清单（按发现时间倒序：队友算法位置、分时图数据源、FastAPI Query 对象直接调用等）

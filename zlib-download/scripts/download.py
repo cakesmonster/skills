@@ -73,7 +73,14 @@ class ZLibraryDownloader:
             print("📖 访问书籍页面...")
             page.goto(url, wait_until='domcontentloaded', timeout=60000)
             print("⏳ 等待 Cloudflare 验证和页面加载...")
-            page.wait_for_timeout(8000)
+            # CF challenge 可能要 60-90s（首页 5s，book 页要重过），轮询直到 title 稳定
+            for _ in range(35):
+                page.wait_for_timeout(3000)
+                cur_title = page.title() or ''
+                if 'Just a moment' not in cur_title and cur_title.strip():
+                    break
+            # 给页面稳定时间（防跨域跳转中查询）
+            page.wait_for_timeout(3000)
 
             title = self._extract_book_title(page)
             print(f"📚 书名: {title}")
@@ -89,31 +96,40 @@ class ZLibraryDownloader:
             href = dl_link.get_attribute('href') or ''
             link_text = dl_link.inner_text() or ''
 
-            # 判断格式
-            detected_format = 'epub'
-            if 'pdf' in link_text.lower():
+            # 判断格式（支持 epub / pdf / mobi）
+            text_lower = link_text.lower()
+            if 'pdf' in text_lower:
                 detected_format = 'pdf'
+            elif 'mobi' in text_lower or 'azw' in text_lower or 'kindle' in text_lower:
+                detected_format = 'mobi'
             elif prefer_format == 'pdf':
                 detected_format = 'pdf'
+            else:
+                detected_format = 'epub'
 
             print(f"✅ 下载链接: {link_text} -> {href[:60]}")
 
-            # 构建下载 URL
-            dl_url = href if href.startswith('http') else f"https://zh.zlib.li{href}"
+            # 构建下载 URL — 如果浏览器当前在镜像站（z-library.ms），用镜像的 host
+            from urllib.parse import urlparse as _urlparse
+            current_host = _urlparse(page.url).hostname if page.url else ''
+            dl_path = href if href.startswith('/') else href
+            if dl_path.startswith('/'):
+                dl_url = f"https://{current_host}{dl_path}" if current_host else f"https://zh.zlib.li{dl_path}"
+            else:
+                dl_url = dl_path
 
             # 构造目标文件名
-            ext = '.epub' if detected_format == 'epub' else '.pdf'
+            ext_map = {'epub': '.epub', 'pdf': '.pdf', 'mobi': '.mobi'}
+            ext = ext_map.get(detected_format, '.epub')
             safe_title = self._sanitize_filename(title) if title else 'book'
             target_filename = f"{safe_title}{ext}"
             final_path = self.downloads_dir / target_filename
 
             print(f"⬇️  开始下载: {target_filename}")
 
-            # 使用 expect_download 捕获下载
+            # 用 anchor click 触发下载（Playwright 拦截 click → download 事件）
             with page.expect_download(timeout=60000) as dl_info:
-                page.evaluate(f"window.location.href = '{dl_url}'")
-                page.wait_for_timeout(5000)
-
+                dl_link.click()
             dl = dl_info.value
             dl.save_as(str(final_path))
 

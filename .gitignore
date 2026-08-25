@@ -1,0 +1,5 @@
+# 第三方工具克隆（自带 .git，不入本仓库）
+skillspector/
+__pycache__/
+*.pyc
+.venv/

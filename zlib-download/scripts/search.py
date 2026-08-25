@@ -63,21 +63,33 @@ def search(query: str) -> list[tuple[str, str]]:
 
         print(f"📄 结果页: {page.url}")
 
-        # 提取书籍链接
-        links = page.query_selector_all('a[href*="/book/"]')
+        # 提取书籍链接（z-bookcard 是带 shadowRoot 的自定义元素，a 在 shadow DOM 里）
+        try:
+            raw_results = page.evaluate("""
+                () => Array.from(document.querySelectorAll('z-bookcard')).map(card => {
+                    const root = card.shadowRoot || card;
+                    const a = root.querySelector('a[href*="/book/"]');
+                    const titleEl = card.querySelector('[slot="title"]') || (root.querySelector ? root.querySelector('[slot="title"]') : null);
+                    return {
+                        href: a ? a.getAttribute('href') : null,
+                        title: titleEl ? titleEl.textContent.trim() : (a ? a.textContent.trim() : ''),
+                    };
+                }).filter(r => r.href)
+            """)
+        except Exception as e:
+            print(f"❌ 提取失败: {e}")
+            raw_results = []
+
         seen = set()
-        for link in links:
-            href = link.get_attribute('href') or ''
-            # 清理掉 query string 中的 dsource 等参数
+        for item in raw_results:
+            href = item.get('href') or ''
             clean_href = href.split('?')[0]
-            if clean_href not in seen:
-                seen.add(clean_href)
-                try:
-                    title = link.inner_text()[:80].strip()
-                except:
-                    title = ''
-                if title:
-                    results.append((f"https://zh.zlib.li{clean_href}", title))
+            if clean_href in seen:
+                continue
+            seen.add(clean_href)
+            title = (item.get('title') or '').strip()[:80]
+            if title:
+                results.append((f"https://zh.zlib.li{clean_href}", title))
 
     except Exception as e:
         print(f"❌ 搜索失败: {e}")
