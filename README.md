@@ -114,8 +114,19 @@ Linux 代理配置工具—— sing-box + Reality 协议。
 
 ---
 
+## product-hunt
+
+Product Hunt 日/周/月热门产品榜（votes 排名），输出中文 Markdown 简报。
+
+**功能：** GraphQL API v2 主路径（Developer Token 直用）、Atom feed 零配置降级、主题过滤（topic slug）。
+
+**核心认知：** PH 网页被 Cloudflare 全面拦截（含 CloakBrowser 有头/无头），浏览器路径完全不可行——与 github-trending 的 SSR 优先策略根本不同。
+
+---
+
 ## 更新日志
 
+- **2026-09-06**：新增 `product-hunt`（PH 榜单抓取，API + feed 双路径）
 - **2026-06-04**：新增 `zhong-shen-shi-nei`（《置身事内》知识问答 Wiki）
 - **2026-06-04**：补 README 缺漏（taoguba-scraper / zlib-download / proxy-on-linux 之前没列）
 - **2026-06-04**：补建 `skills-repo-manager` 强制仓库身份识别流程
