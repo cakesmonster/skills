@@ -28,7 +28,12 @@ else
 fi
 
 echo "### PH COLLECT $(date -u +%Y-%m-%dT%H:%M:%SZ) UTC | $(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M %Z')"
-echo "### token_len=${#PH_DEV_TOKEN}"
+# ${#VAR} on an unset var aborts the whole script under `set -u` — guard it.
+if [[ -n "${PH_DEV_TOKEN:-}" ]]; then
+  echo "### token_len=${#PH_DEV_TOKEN}"
+else
+  echo "### WARN: PH_DEV_TOKEN empty — API sections will degrade to feed (no votes)"
+fi
 
 api_ok=0
 # Trim to what the report actually needs (daily top12 / weekly+monthly top10) and
@@ -43,7 +48,12 @@ for m in daily weekly monthly; do
   if [[ $rc -eq 0 && -s /tmp/.ph_out_"$m" ]]; then
     out="$(head -n "$(keep_for "$m")" /tmp/.ph_out_"$m" | sed 's/?utm_[^"]*//')"
     printf '%s\n' "$out"
-    case "$out" in *'"source": "api"'*) api_ok=1 ;; esac
+    case "$out" in
+      *'"source": "api"'*) api_ok=1 ;;
+      # No token => ph_fetch.sh silently degrades this section to feed data.
+      # Say so out loud, or the report formats feed entries as if they were ranked.
+      *) echo "### NOTE: $m 段是 feed 降级数据（无票数、非 votes 排名）——简报禁止给这些条目标票数" ;;
+    esac
   else
     echo "### SECTION $m FAILED (exit $rc)"
     head -5 /tmp/.ph_err_"$m" 2>/dev/null | sed 's/^/  stderr: /'

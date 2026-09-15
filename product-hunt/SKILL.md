@@ -111,6 +111,7 @@ curl -s -X POST https://api.producthunt.com/v2/api/graphql \
   - 采集器约定：**永远 exit 0 且永远有输出**（stdout 为空时 scheduler 会跳过整轮，连 AI 都不调用）；每段失败就打印 `### SECTION x FAILED` 让 agent 如实上报
   - `_run_job_script` 用 `_sanitize_subprocess_env` 清掉 Hermes 托管的密钥，所以采集器**必须自己 source** `/root/.hermes/profiles/news-friday/.env.ph`
   - 别把采集器输出直接 pipe 进 `head`：已 `set -o pipefail`，SIGPIPE 会让整轮被误判为 FAILED。先落临时文件再 head
+  - **改完脚本先跑 `bash scripts/verify_ph.sh`**（34 项 smoke+契约检查：api/feed 路径、SECTION 契约、`set -u` 未绑定变量、坏 token/缺 env 的降级诚实性）。它模拟 scheduler 的净化环境用 `env -i` 跑——真踩过坑：不这么做时 shell 里残留的 `PH_DEV_TOKEN` 会掩盖"无 token"分支
 - ⚠️ **2026-09-07 → 09-15 的连续失败复盘**：本 profile `approvals.cron_mode: deny` + tirith 扫描器误报 → cron 会话里 terminal 对**所有**命令（含 `echo hello`）全拦；叠加直连 PH 不通，agent 三期退化：09-12 只报故障、09-14 只渲染出 3 条 feed、**09-15 直接把 9/6 的 /tmp 缓存当当日榜推送**（被 boss 发现）。教训：① 数据源不可达时宁可不报也不要推旧数据；② 修好网络路径后仍要保证"agent 拿得到数据"，所以才有上面的 pre-run script 架构
 - job 的 `enabled_toolsets` 保留 browser（降级路径）——terminal 被拦时 `browser_navigate` 打开 `https://www.producthunt.com/feed` 仍可用；注意浏览器不走 mihomo，直连不通时这条也可能超时
 - terminal 被拦时的降级路径（09-07 实测可用）：`browser_navigate` 打开 `https://www.producthunt.com/feed` → snapshot/truncated 文件里直接就是完整 Atom XML（无需 DOMParser）
