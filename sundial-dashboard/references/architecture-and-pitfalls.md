@@ -12,7 +12,7 @@
 
 ```
 盘中: board_monitor (FastAPI + systemd)  ← mootdx Level-2 + 逐笔成交
-      项目路径: ~/.hermes/board_monitor/  (独立 Python 项目, src layout + pyproject.toml)
+      项目路径: ~/cakemonster/board-monitor/  (独立 Python 项目, src layout + pyproject.toml)
       源码: src/board_monitor/ → config / models / market / trading_api / state / monitor + signals/*
       部署: deploy/systemd/ → *.service + *.timer
       启停: systemd timer → curl POST /start (09:25) /stop (15:00)
@@ -31,8 +31,8 @@
 
 | 项目 | 端口 | 路径 | systemd |
 |------|------|------|---------|
-| board_monitor | 8099 | ~/.hermes/board_monitor/ | board-monitor.service + start/stop timer |
-| 日晷 Sundial | 8100 | ~/.hermes/projects/sundial/ | sundial.service |
+| board_monitor | 8099 | ~/cakemonster/board-monitor/ | board-monitor.service + start/stop timer |
+| 日晷 Sundial | 8100 | ~/cakemonster/sundial/ | sundial.service |
 | quant-backtester | 已合并入日晷 | sundial/src/quant_backtester/ | 不再独立运行 |
 
 ## 日晷 Sundial 当前状态 (v0.5.2)

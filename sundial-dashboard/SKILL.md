@@ -64,7 +64,7 @@ hover card 显示单只股票的总市值/流通市值/PE/换手率/概念。由
 
 **前端缓存**：`renderHoverCard` 改为 `async`，首次查询后写入 `state.data.stockMeta[code]`，后续同只股票不再请求。name 从 DOM 参数 `domName` 注入到 API 响应中。
 
-项目路径：`/root/.hermes/projects/sundial/`
+项目路径：`/root/cakemonster/sundial/`
 数据路径：`src/data/sundial.db`
 systemd：`sundial.service`（开机自启，MemoryMax=600M）
 
@@ -670,8 +670,8 @@ uvicorn 缓存模块，旧进程可能还在跑旧代码：
 
 ```bash
 pkill -9 -f "uvicorn sundial" 2>/dev/null
-find /root/.hermes/projects/sundial -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null
-cd /root/.hermes/projects/sundial && python3 -B -m uvicorn sundial.main:app --host 127.0.0.1 --port 8100
+find /root/cakemonster/sundial -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null
+cd /root/cakemonster/sundial && python3 -B -m uvicorn sundial.main:app --host 127.0.0.1 --port 8100
 ```
 
 ### `main.py` 中用 `datetime.now()` 要补 import
@@ -683,8 +683,8 @@ cd /root/.hermes/projects/sundial && python3 -B -m uvicorn sundial.main:app --ho
 单元测试可能写入真实数据库。排查和清理：
 
 ```bash
-sqlite3 /root/.hermes/projects/sundial/src/data/sundial.db "SELECT date, slot, COUNT(*) FROM hot_rank_snapshot GROUP BY date, slot"
-sqlite3 /root/.hermes/projects/sundial/src/data/sundial.db "DELETE FROM hot_rank_snapshot"  # 必要时清空
+sqlite3 /root/cakemonster/sundial/src/data/sundial.db "SELECT date, slot, COUNT(*) FROM hot_rank_snapshot GROUP BY date, slot"
+sqlite3 /root/cakemonster/sundial/src/data/sundial.db "DELETE FROM hot_rank_snapshot"  # 必要时清空
 ```
 
 ### 机器资源限制
@@ -712,7 +712,7 @@ board_monitor 队友算法在 `signals/team.py`（不是 `teams.py`）。用 `fi
 ## 测试
 
 ```bash
-cd ~/.hermes/projects/sundial && python -m pytest -q  # 246 passed
+cd ~/cakemonster/sundial && python -m pytest -q  # 246 passed
 ```
 
 ### temp_db fixture 隔离 — monkeypatch 两处
