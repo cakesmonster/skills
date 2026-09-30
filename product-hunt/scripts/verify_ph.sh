@@ -16,13 +16,18 @@ bad()  { echo "  FAIL: $1"; FAIL=$((FAIL+1)); }
 check(){ if eval "$2"; then ok "$1"; else bad "$1  [$2]"; fi; }
 
 echo "== 1. ph_fetch.sh API path (proxy required on this host) =="
+# ph_fetch.sh reads PH_DEV_TOKEN straight from the environment. The cron collector
+# sources this file itself, but section 1 calls ph_fetch.sh directly — without this
+# it silently degrades to the feed path (50 lines, no votes) and every assertion
+# below fails for the wrong reason.
+if [[ -f "$ENV_FILE" ]]; then set -a; . "$ENV_FILE"; set +a; fi
 for m in daily weekly monthly; do
   err=$(mktemp); out=$(bash "$SKILL/ph_fetch.sh" "$m" 2>"$err")
   rc=$?
   check "$m: exit 0"                   "[ $rc -eq 0 ]"
   check "$m: proxy probe succeeded"    "grep -q 'proxy OK' '$err'"
   check "$m: 20 JSON lines"            "[ \$(printf '%s\n' \"\$out\" | wc -l) -eq 20 ]"
-  check "$m: source=api + votes>0"     "printf '%s\n' \"\$out\" | python3 -c 'import sys,json; L=[json.loads(l) for l in sys.stdin if l.strip()]; sys.exit(0 if L and all(x[\"source\"]==\"api\" and (x[\"votes\"] or 0)>0 for x in L) else 1)'"
+  check "$m: source=api + votes numeric (0 OK for same-day launches)" "printf '%s\n' \"\$out\" | python3 -c 'import sys,json; L=[json.loads(l) for l in sys.stdin if l.strip()]; sys.exit(0 if L and all(x[\"source\"]==\"api\" and isinstance(x.get(\"votes\"),int) and x[\"votes\"]>=0 for x in L) and any(x[\"votes\"]>0 for x in L) else 1)'"
   rm -f "$err"
 done
 
