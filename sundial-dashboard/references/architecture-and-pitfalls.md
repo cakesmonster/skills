@@ -17,7 +17,7 @@
       部署: deploy/systemd/ → *.service + *.timer
       启停: systemd timer → curl POST /start (09:25) /stop (15:00)
       查询: GET http://127.0.0.1:8099/status  → 持仓/候选/信号
-      日志: ~/.hermes/data/trading/logs/YYYYMMDD/monitor.log
+      日志: ~/cakemonster/board-monitor/data/logs/YYYYMMDD/monitor.log
       pip install -e . 安装开发模式, uvicorn board_monitor.main:app 启动
       
 盘后: Agent 选股 → active_plan.json + 计划.md
