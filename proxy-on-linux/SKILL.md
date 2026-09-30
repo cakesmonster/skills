@@ -1,259 +1,85 @@
-# proxy-on-linux
+---
+name: proxy-on-linux
+description: Linux 服务器代理 — 机场订阅 → mihomo(Clash Meta) + watchdog 自愈。2026-09-15 起现行方案，sing-box 为已停用旧案。含构建顺序与订阅更新方法。
+version: 2.0.0
+---
 
-Linux 服务器通过订阅链接配置代理（sing-box + Reality），支持自动故障关闭看门狗。
+# Linux 代理（mihomo / Clash Meta）
 
-## 背景
+当前部署（本机实测 2026-09-30）：`curl -x http://127.0.0.1:7890 https://www.google.com` → HTTP 200。
 
-- 订阅格式：`vless://uuid@server:port?mode=multi&security=reality&pbk=...&sid=...&sni=...`（base64 编码）
-- sing-box 支持从订阅里的 `pbk`（公钥）自动生成客户端私钥，无需额外配置 privateKey
-- Xray 需要显式 privateKey，无法直接使用不含私钥的通用订阅
-- **推荐使用 sing-box 而非 Xray**
+## 现状架构
 
-## 快速使用
+```
+机场订阅(clash格式, 117节点 vless+reality)
+  └→ /etc/mihomo/config.yaml          ← 订阅原样落地(含uuid/pbk, 敏感, 勿入git)
+mihomo  v1.19.31  /usr/local/bin/mihomo   (systemd: mihomo.service, enabled)
+  ├─ mixed-port: 127.0.0.1:7890        ← HTTP+SOCKS 共用, 程序都指这里
+  └─ external-controller: 127.0.0.1:9090  ← REST API(换节点/查延迟)
+proxy-watchdog  ~/cakemonster/proxy-watchdog/proxy-watchdog.sh (systemd, enabled)
+  ├─ 每30s: curl google via :7890
+  ├─ 连续3次失败 → systemctl restart mihomo
+  └─ 30分钟内重启满3次 → 退避30分钟(防重启风暴)
+geo 数据: /etc/mihomo/{geoip.dat, geosite.dat, geoip.metadb}
+```
+
+历史注：`sing-box.service` 仍装着但 **inactive（2026-09-15 被 mihomo 取代）**。
+不要误启动它——和 mihomo 抢 7890。回退旧案见文末。
+
+## 构建顺序（从零部署一台新服务器）
+
+1. **下载 mihomo 二进制**（GitHub 直连慢，挂代理或 ghproxy）
+   ```bash
+   curl -L -o /tmp/m.zip https://ghproxy.net/https://github.com/MetaCubeX/mihomo/releases/download/v1.19.31/mihomo-linux-amd64-v1.19.31.zip
+   unzip /tmp/m.zip -d /tmp/m && cp /tmp/m/mihomo /usr/local/bin/ && chmod +x /usr/local/bin/mihomo
+   ```
+2. **落地订阅** → `/etc/mihomo/config.yaml`（机场"复制 Clash 配置"直接整份落盘，reality 节点 mihomo 原生支持，无需推导私钥）+ 放入 geoip/geosite 文件
+3. **systemd** `/etc/systemd/system/mihomo.service`：
+   ```ini
+   [Service]
+   ExecStart=/usr/local/bin/mihomo -d /etc/mihomo
+   Restart=always
+   RestartSec=3
+   LimitNOFILE=1048576
+   ```
+4. **watchdog**：脚本放 `~/cakemonster/proxy-watchdog/`，unit 的 `ExecStart=/bin/bash <该路径>/proxy-watchdog.sh`，`After=mihomo.service`
+5. **验证**：
+   ```bash
+   curl -x http://127.0.0.1:7890 --max-time 10 https://httpbin.org/ip   # 出口IP≠服务器IP
+   curl -s http://127.0.0.1:9090/version                                 # {"meta":true,...}
+   ```
+
+## 更新订阅
+
+机场面板换配置 → 新的 clash 整份配置覆写 `/etc/mihomo/config.yaml` → `systemctl restart mihomo` → 跑上面验证。watchdog 不用动。
+
+## 排障顺序
 
 ```bash
-# 访问被墙网站（单次）
-curl -x http://127.0.0.1:7890 https://被墙域名
-
-# 长期使用，写到环境变量
-export http_proxy=http://127.0.0.1:7890
-export https_proxy=http://127.0.0.1:7890
+systemctl is-active mihomo proxy-watchdog        # 服务层
+ss -tlnp | grep 7890                             # 监听层(确认是mihomo不是别的)
+journalctl -u proxy-watchdog --since "-1h"       # 探测史: "失败(n/3)"/"已恢复"/"退避"
+journalctl -u mihomo --since "-1h"               # mihomo自身日志
+curl -s http://127.0.0.1:9090/proxies | head -c 300   # 节点组状态(REST)
 ```
-
-## 服务控制
-
-```bash
-# 查看状态
-systemctl status sing-box
-
-# 关闭代理
-systemctl stop sing-box
-
-# 开启代理
-systemctl start sing-box
-
-# 重启代理（改完配置后）
-systemctl restart sing-box
-
-# 看门狗状态
-systemctl status proxy-watchdog
-
-# 关闭看门狗（仅停止自动检测，代理不动）
-systemctl stop proxy-watchdog
-```
-
-## 架构
-
-```
-sing-box (systemd service)
-├── inbound: http 127.0.0.1:7890（仅本机）
-└── outbound: vless reality → 代理服务器
-
-proxy-watchdog (systemd service)
-├── 每30秒通过代理访问 google.com
-├── 连续失败3次 → systemctl stop sing-box → 自动退出
-└── 恢复成功 → 计数器清零，继续监控
-```
-
-## 配置步骤
-
-### 1. 获取 sing-box 二进制
-
-从 Mac 下载后上传（服务器 GitHub 下载速度极慢，通常只有几 KB/s）：
-
-```bash
-# 服务器准备接收
-nc -l -p 5555 > /tmp/sing-box.tar.gz
-
-# Mac 上传（文件路径替换为实际下载的 tar.gz）
-nc 服务器IP 5555 < ~/Downloads/sing-box-1.13.12-linux-amd64.tar.gz
-```
-
-或者在服务器上用代理下载：
-
-```bash
-curl -o /tmp/sing-box.tar.gz -L --max-time 300 \
-  'https://ghproxy.net/https://github.com/SagerNet/sing-box/releases/download/v1.13.12/sing-box-1.13.12-linux-amd64.tar.gz'
-```
-
-解压：
-
-```bash
-tar -xzf sing-box-*.tar.gz -C /tmp/
-ls /tmp/sing-box-1.13.12-linux-amd64/
-# 二进制路径: /tmp/sing-box-1.13.12-linux-amd64/sing-box
-```
-
-### 2. 解析订阅链接
-
-```python
-import base64, re, json
-
-sub_url = "你的订阅链接"  # base64 编码的 vless URI 列表
-raw = base64.b64decode(sub_url).decode()
-
-nodes = []
-for line in raw.strip().split('\n'):
-    if 'vless://' not in line:
-        continue
-    m = re.match(r'vless://([^@]+)@([^:]+):(\d+)\?(.*)#(.+)', line)
-    if not m:
-        continue
-    uuid, server, port = m.group(1), m.group(2), int(m.group(3))
-    params = dict(p.split('=', 1) for p in m.group(4).split('&') if '=' in p)
-
-    nodes.append({
-        'tag': m.group(5),          # URL 编码的中文节点名
-        'server': server,
-        'port': port,
-        'uuid': uuid,
-        'pbk': params.get('pbk', ''),
-        'sid': params.get('sid', ''),
-        'sni': params.get('sni', ''),
-    })
-
-print(json.dumps(nodes, indent=2, ensure_ascii=False))
-```
-
-取第一个节点（或者测试延迟最低的），记下 `tag`、`server`、`port`、`uuid`、`pbk`、`sid`、`sni`。
-
-### 3. 生成 sing-box 配置
-
-```python
-import json
-
-# 用上一步解析出来的值替换下面这些占位符
-SERVER = "服务器域名"
-PORT = 端口数字
-UUID = "订阅里的uuid"
-PBK = "pbk公钥"
-SID = "shortId"
-SNI = "TLS SNI域名（通常 swcdn.apple.com）"
-
-config = {
-    "log": {"level": "warning"},
-    "inbounds": [{
-        "tag": "http",
-        "type": "http",
-        "listen": "127.0.0.1",
-        "listen_port": 7890
-    }],
-    "outbounds": [
-        {
-            "tag": "proxy",
-            "type": "vless",
-            "server": SERVER,
-            "server_port": PORT,
-            "uuid": UUID,
-            "flow": "xtls-rprx-vision",
-            "network": "tcp",
-            "tls": {
-                "enabled": True,
-                "server_name": SNI,
-                "utls": {"enabled": True, "fingerprint": "chrome"},
-                "reality": {
-                    "enabled": True,
-                    "public_key": PBK,
-                    "short_id": SID
-                }
-            }
-        },
-        {"tag": "direct", "type": "direct"}
-    ],
-    "route": {"auto_detect_interface": True}
-}
-
-with open('/etc/sing-box/config.json', 'w') as f:
-    json.dump(config, f, indent=2)
-```
-
-### 4. 安装 systemd 服务
-
-```bash
-cat > /tmp/sing-box.service << 'EOF'
-[Unit]
-Description=sing-box proxy
-After=network.target
-
-[Service]
-ExecStart=/tmp/sing-box-1.13.12-linux-amd64/sing-box run -C /etc/sing-box
-Restart=always
-RestartSec=3
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-cp /tmp/sing-box.service /etc/systemd/system/sing-box.service
-systemctl daemon-reload
-systemctl enable sing-box
-systemctl start sing-box
-```
-
-### 5. 安装看门狗（可选，推荐）
-
-```bash
-cat > /usr/local/bin/proxy-watchdog.sh << 'WATCHDOG'
-#!/bin/bash
-PROXY="http://127.0.0.1:7890"
-TEST_URL="https://www.google.com"
-TIMEOUT=10
-MAX_FAIL=3
-CHECK_INTERVAL=30
-
-fail_count=0
-echo "$(date): 代理看门狗启动"
-
-while true; do
-    if curl -x "$PROXY" --max-time "$TIMEOUT" -s -o /dev/null -w "%{http_code}" "$TEST_URL" | grep -qE "^(200|301|302)"; then
-        [ "$fail_count" -gt 0 ] && echo "$(date): 代理恢复" && fail_count=0
-    else
-        fail_count=$((fail_count + 1))
-        echo "$(date): 代理连接失败 (${fail_count}/${MAX_FAIL})"
-        [ "$fail_count" -ge "$MAX_FAIL" ] && echo "$(date): 关闭 sing-box" && systemctl stop sing-box && exit 0
-    fi
-    sleep $CHECK_INTERVAL
-done
-WATCHDOG
-chmod +x /usr/local/bin/proxy-watchdog.sh
-
-cat > /etc/systemd/system/proxy-watchdog.service << 'EOF'
-[Unit]
-Description=Proxy Watchdog
-After=sing-box.service
-
-[Service]
-Type=simple
-ExecStart=/bin/bash /usr/local/bin/proxy-watchdog.sh
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-systemctl daemon-reload
-systemctl enable proxy-watchdog
-systemctl start proxy-watchdog
-```
-
-### 6. 验证
-
-```bash
-curl -x http://127.0.0.1:7890 --max-time 10 https://httpbin.org/ip
-# 返回代理出口 IP（非服务器原 IP）说明代理正常
-```
+- watchdog 报 1/3 后自动恢复 = 瞬时抖动，正常，不处理
+- watchdog 进入"退避" = mihomo 反复起不来，多半订阅节点全挂 → 换订阅
+- google 通但某站不通 = 分流规则问题，改 config.yaml rules 后 restart
 
 ## 已知坑
 
-1. **Xray 无法直接用这个订阅**：Xray outbound reality 要求 `privateKey`，订阅只有服务端公钥 `pbk`。Clash/sing-box 可从 pbk 自动派生私钥，Xray 不行。**用 sing-box。**
+1. **Reality 订阅的客户端差异**：Xray 要显式 privateKey（通用订阅没有）→ 握手失败；Clash/mihomo/sing-box 从 pbk 自动推导 → 能用。**Linux 上别用 Xray 跑订阅。**
+2. **watchdog 语义（2026-09-15 定稿）**：连续失败是"restart+退避"，不是早期版本的"stop 永久关闭"——旧脚本模板已过时，以 `~/cakemonster/proxy-watchdog/proxy-watchdog.sh` 为准。
+3. **config.yaml 是敏感文件**：明文含 uuid/reality 公钥。留在 /etc/mihomo，永不进 git 仓库（skills 仓库只写方法不写订阅）。
+4. **external-controller 保持 127.0.0.1**：这台机无认证暴露史（sundial 同类问题），9090 开对外=任何人控制你的代理。
+5. 环境变量持久化非必需：程序都是显式 `-x http://127.0.0.1:7890`，改全局 http_proxy 会波及 pip/system 等所有出站。
 
-2. **sing-box 字段名**：outbound 用 `server_port`（非 `port`），`server_name`（非 `servername`），`public_key`（非 `publicKey`），`short_id`（非 `shortId`）。
+## 旧案回退（sing-box，2026-09-15 前）
 
-3. **reality 必须配 utls**：`utls.enabled` 和 `utls.fingerprint` 必须设置，否则报错 "uTLS is required by reality client"。
+`/etc/sing-box/config.json` + sing-box v1.13.12，单节点 reality outbound。字段坑：`server_port`/`public_key`/`short_id` snake_case；`tls.utls={enabled:true,fingerprint:"chrome"}` 必配；route 无 outbounds 字段。仅当 mihomo 方案整体失效时用，且先 stop mihomo。
 
-4. **不要加 `route.outbounds`**：sing-box 的 route 里没有 `outbounds` 字段，所有流量默认走第一个 outbound。
+## 相关文件
 
-5. **订阅里 `sni` 和 `servername` 可能不同**：一般填 `swcdn.apple.com`，具体看订阅解析出来的 `sni` 字段。
-
-6. **geoip/geosite 文件**：sing-box 不需要，Xray 需要。
+- `~/cakemonster/proxy-watchdog/proxy-watchdog.sh` — watchdog 现行实现（git 管理）
+- `/etc/mihomo/config.yaml` — 现行订阅配置（敏感）
+- `git@github.com:cakesmonster/skills` — 本文档仓库
